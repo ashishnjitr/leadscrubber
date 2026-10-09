@@ -4,10 +4,9 @@ import pandas as pd
 import phonenumbers
 import streamlit as st
 
-# Preferred reputable domains given priority during email deduplication
 # Comprehensive list of reputable consumer, business, enterprise, and regional domains
 PREFERRED_DOMAINS = [
-    # Top Consumer & Enterprise Workspace Giants
+    # Top Consumer & Enterprise Workspace
     "gmail.com",
     "googlemail.com",
     "outlook.com",
@@ -20,7 +19,6 @@ PREFERRED_DOMAINS = [
     "icloud.com",
     "me.com",
     "mac.com",
-    
     # Privacy & Secure Webmail
     "protonmail.com",
     "proton.me",
@@ -30,8 +28,7 @@ PREFERRED_DOMAINS = [
     "zohomail.com",
     "fastmail.com",
     "hey.com",
-    
-    # Major US Telecom & ISP Providers
+    # Major Telecom & ISP Providers
     "aol.com",
     "aim.com",
     "comcast.net",
@@ -43,8 +40,7 @@ PREFERRED_DOMAINS = [
     "charter.net",
     "spectrum.net",
     "earthlink.net",
-    
-    # Regional & International Webmail (UK, Europe, APAC, India)
+    # Regional & International Webmail
     "yahoo.co.uk",
     "yahoo.co.in",
     "yahoo.ca",
@@ -59,7 +55,19 @@ PREFERRED_DOMAINS = [
     "yandex.ru",
 ]
 
-# Common variations of column names in raw recruitment/lead exports
+PREFERRED_DOMAINS_SET = set(PREFERRED_DOMAINS)
+
+DISPOSABLE_DOMAINS = {
+    "tempmail.com",
+    "mailinator.com",
+    "guerrillamail.com",
+    "10minutemail.com",
+    "throwawaymail.com",
+    "trashmail.com",
+    "yopmail.com",
+}
+
+# Common variations of column names in raw recruitment and sourcing exports
 COLUMN_ALIASES = {
     "first_name": ["first name", "firstname", "first", "fname", "given name"],
     "last_name": ["last name", "lastname", "last", "lname", "surname", "family name"],
@@ -69,13 +77,20 @@ COLUMN_ALIASES = {
     "location": ["location", "city", "address", "state", "candidate location", "current location", "metro"],
     "current_company": ["current company", "company", "organization", "employer", "current employer", "firm"],
     "linkedin_url": [
-        "linkedin",
-        "linkedin url",
-        "linkedin profile",
-        "linkedin link",
+        "profile url",
+        "profile_url",
         "profile link",
-        "social url",
+        "profilelink",
+        "profile",
+        "person linkedin url",
+        "linkedin url",
         "linkedin_url",
+        "linkedin profile",
+        "linkedin",
+        "candidate linkedin",
+        "social url",
+        "public profile url",
+        "url",
     ],
 }
 
@@ -110,7 +125,7 @@ def split_full_name(name_str) -> tuple[str | None, str | None]:
 
 
 def map_columns(df: pd.DataFrame) -> dict:
-    """Finds matching column names in the uploaded DataFrame."""
+    """Finds matching column names in the uploaded DataFrame based on predefined aliases."""
     normalized_cols = {col: re.sub(r"[_\s\W]+", " ", str(col)).strip().lower() for col in df.columns}
     mapping = {}
 
@@ -126,19 +141,32 @@ def map_columns(df: pd.DataFrame) -> dict:
 
 
 def extract_best_email(val) -> str | None:
-    """Extracts valid emails and prioritizes established providers if multiple exist."""
+    """Extracts valid emails and prioritizes established providers and clean corporate domains."""
     if pd.isna(val):
         return None
     val_str = str(val).lower()
+
     emails = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", val_str)
     if not emails:
         return None
 
-    for email in emails:
+    clean_emails = [e for e in emails if e.split("@")[-1] not in DISPOSABLE_DOMAINS]
+    pool = clean_emails if clean_emails else emails
+
+    # 1. First priority: Known preferred webmail/workspace provider
+    for email in pool:
         domain = email.split("@")[-1]
-        if domain in PREFERRED_DOMAINS:
+        if domain in PREFERRED_DOMAINS_SET:
             return email
-    return emails[0]
+
+    # 2. Second priority: Standard corporate/business domain
+    for email in pool:
+        domain = email.split("@")[-1]
+        if domain not in DISPOSABLE_DOMAINS:
+            return email
+
+    # 3. Fallback
+    return pool[0]
 
 
 def format_phone_number(val, default_region="US") -> str | None:
@@ -171,68 +199,30 @@ def format_phone_number(val, default_region="US") -> str | None:
 
 
 def clean_linkedin_url(val) -> str | None:
-    """Detects, normalizes, and extracts clean LinkedIn profile links."""
+    """Extracts and normalizes any valid LinkedIn URL or handle."""
     if pd.isna(val):
         return None
     val_str = str(val).strip()
 
-    match = re.search(r"(?:https?://)?(?:www\.)?linkedin\.com/in/([a-zA-Z0-9_\-%]+)", val_str, re.IGNORECASE)
-    if match:
-        profile_slug = match.group(1).rstrip("/")
-        return f"https://www.linkedin.com/in/{profile_slug}"
+    if not val_str or val_str.lower() in ["nan", "none", "n/a", ""]:
+        return None
 
-    # Also catch handles or raw company/in links
+    # Handle standard URLs and Sales Navigator links
     if "linkedin.com" in val_str.lower():
-        cleaned_link = re.sub(r"\?.*$", "", val_str)  # Remove tracking parameters
-        if not cleaned_link.startswith("http"):
-            cleaned_link = f"https://{cleaned_link}"
-        return cleaned_link
+        cleaned = re.sub(r"\?.*$", "", val_str).strip().rstrip("/")
+        if not cleaned.startswith("http://") and not cleaned.startswith("https://"):
+            cleaned = f"https://{cleaned}"
+        return cleaned
+
+    # Handle exported handles or vanity slugs
+    if val_str.startswith("in/"):
+        return f"https://www.linkedin.com/{val_str.strip().rstrip('/')}"
 
     return None
-# Convert to a set for O(1) instantaneous lookup
-PREFERRED_DOMAINS_SET = set(PREFERRED_DOMAINS)
 
-# Common throwaway/temporary email providers to deprioritize or filter out
-DISPOSABLE_DOMAINS = {
-    "tempmail.com", "mailinator.com", "guerrillamail.com", "10minutemail.com",
-    "throwawaymail.com", "trashmail.com", "yopmail.com"
-}
 
-def extract_best_email(val) -> str | None:
-    """
-    Extracts valid emails and prioritizes established providers and clean business domains
-    over generic or disposable addresses.
-    """
-    if pd.isna(val):
-        return None
-    val_str = str(val).lower()
-    
-    # Strict regex matching valid email patterns
-    emails = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", val_str)
-    if not emails:
-        return None
-
-    # Filter out disposable/trash domains if possible
-    clean_emails = [e for e in emails if e.split("@")[-1] not in DISPOSABLE_DOMAINS]
-    pool = clean_emails if clean_emails else emails
-
-    # 1. First priority: Established preferred webmail/workspace provider
-    for email in pool:
-        domain = email.split("@")[-1]
-        if domain in PREFERRED_DOMAINS_SET:
-            return email
-
-    # 2. Second priority: Likely corporate domain (contains standard .com, .io, .org, etc., but not disposable)
-    for email in pool:
-        domain = email.split("@")[-1]
-        if domain not in DISPOSABLE_DOMAINS:
-            return email
-
-    # 3. Fallback
-    return pool[0]
-
-def process_datasets(df_raw: pd.DataFrame, region: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """Generates Dataset 1 (Direct Contacts) and Dataset 2 (LinkedIn Leads)."""
+def clean_dataframe(df_raw: pd.DataFrame, region: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Extracts target fields, normalizes names/contacts, drops invalid rows, and dedupes."""
     mapping = map_columns(df_raw)
     base_df = pd.DataFrame()
 
@@ -244,7 +234,20 @@ def process_datasets(df_raw: pd.DataFrame, region: str) -> tuple[pd.DataFrame, p
         else:
             base_df[target] = None
 
-    # Resolve names
+    # Robust fallback for LinkedIn URL if alias mapping was skipped
+    if base_df["linkedin_url"].isna().all():
+        for col in df_raw.columns:
+            col_str = str(col).lower()
+            if "profile" in col_str or "linkedin" in col_str:
+                base_df["linkedin_url"] = df_raw[col]
+                break
+            # Check content for linkedin.com occurrences
+            sample = df_raw[col].dropna().astype(str).str.lower()
+            if sample.str.contains("linkedin.com").any():
+                base_df["linkedin_url"] = df_raw[col]
+                break
+
+    # Name Resolution: Split Full Name if separate First/Last fields are missing
     has_first = base_df["first_name"].notna() & (base_df["first_name"].astype(str).str.strip() != "")
     has_last = base_df["last_name"].notna() & (base_df["last_name"].astype(str).str.strip() != "")
     needs_name_split = ~(has_first & has_last) & base_df["full_name"].notna()
@@ -258,69 +261,72 @@ def process_datasets(df_raw: pd.DataFrame, region: str) -> tuple[pd.DataFrame, p
             res[1] for res in split_results[~has_last[needs_name_split]]
         ]
 
-    # Clean shared string columns
+    # Clean text columns
     for col in ["first_name", "last_name", "location", "current_company"]:
         base_df[col] = base_df[col].astype(str).str.strip()
         base_df[col] = base_df[col].replace({"nan": None, "None": None, "": None})
 
-    # Standardize contact and profile points
+    # Standardize contact values
     base_df["email"] = base_df["email"].apply(extract_best_email)
     base_df["phone"] = base_df["phone"].apply(lambda p: format_phone_number(p, default_region=region))
     base_df["linkedin_url"] = base_df["linkedin_url"].apply(clean_linkedin_url)
 
     # --- DATASET 1: Verified Direct Contacts (Requires Email AND Phone) ---
     df1 = base_df.dropna(subset=["email", "phone"]).copy()
-    initial_d1_count = len(df1)
+    initial_d1 = len(df1)
     df1 = df1.drop_duplicates(subset=["email"], keep="first")
     df1 = df1.drop_duplicates(subset=["phone"], keep="first")
-    df1_cols = ["first_name", "last_name", "email", "phone", "location", "current_company"]
-    df1 = df1[df1_cols]
+    df1 = df1[["first_name", "last_name", "email", "phone", "location", "current_company"]]
     df1.columns = ["First Name", "Last Name", "Email", "Phone", "Location", "Current Company"]
 
-    # --- DATASET 2: LinkedIn & Sourcing Leads (Requires LinkedIn URL) ---
+    # --- DATASET 2: LinkedIn Sourcing Leads (Requires LinkedIn URL) ---
     df2 = base_df.dropna(subset=["linkedin_url"]).copy()
-    initial_d2_count = len(df2)
-    # Deduplicate strictly on unique normalized LinkedIn profile link
+    initial_d2 = len(df2)
     df2 = df2.drop_duplicates(subset=["linkedin_url"], keep="first")
-    df2_cols = ["first_name", "last_name", "location", "current_company", "linkedin_url"]
-    df2 = df2[df2_cols]
+    df2 = df2[["first_name", "last_name", "location", "current_company", "linkedin_url"]]
     df2.columns = ["First Name", "Last Name", "Location", "Current Company", "LinkedIn URL"]
 
-    metrics = {
+    stats = {
         "raw_total": len(df_raw),
-        "d1_initial": initial_d1_count,
+        "d1_initial": initial_d1,
         "d1_final": len(df1),
-        "d2_initial": initial_d2_count,
+        "d2_initial": initial_d2,
         "d2_final": len(df2),
     }
 
-    return df1, df2, metrics
+    return df1, df2, stats
 
 
-# --- STREAMLIT UI ---
-st.set_page_config(page_title="Candidate & Lead Data Scrubber", page_icon="⚡", layout="wide")
+# --- STREAMLIT USER INTERFACE ---
+st.set_page_config(page_title="Contact & Lead Data Scrubber", page_icon="⚡", layout="wide")
 
-st.title("Candidate & Lead Data Scrubber")
-st.caption("Batch process raw CSVs into two targeted datasets: verified direct contacts and LinkedIn sourcing profiles.")
+st.title("Contact & Lead Data Scrubber")
+st.caption("Upload multiple raw CSVs to automatically clean names, format contact information, and output two deduplicated datasets.")
 
 with st.sidebar:
     st.header("Settings")
     selected_region = st.selectbox(
-        "Default Phone Region Code",
+        "Default Phone Region",
         options=["US", "IN", "GB", "CA", "AU"],
         index=0,
-        help="Used to format numbers lacking a country code.",
+        help="Used to format numbers that lack a country prefix.",
     )
     st.markdown("---")
-    st.markdown("### Output Specifications")
-    st.markdown("**Dataset 1 (Direct Contacts):**\n- Requires **both** Email and Phone\n- Formatted E.164 & deduplicated\n- Columns: First, Last, Email, Phone, Location, Company")
-    st.markdown("**Dataset 2 (LinkedIn Profiles):**\n- Requires **LinkedIn URL**\n- Deduplicated by unique profile link\n- Columns: First, Last, Location, Company, LinkedIn URL")
+    st.markdown("### Output Rules")
+    st.markdown("**Dataset 1 (Direct Outreach):**")
+    st.markdown("- Must contain both a valid Email and Phone")
+    st.markdown("- Filters out throwaway emails, prioritizes trusted providers")
+    st.markdown("- Deduplicated by email and phone")
+    st.markdown("**Dataset 2 (LinkedIn Profiles):**")
+    st.markdown("- Must contain a valid Profile URL or handle")
+    st.markdown("- Standardized to full LinkedIn address")
+    st.markdown("- Deduplicated by unique profile link")
 
 uploaded_files = st.file_uploader(
     "Choose CSV files",
     type=["csv"],
     accept_multiple_files=True,
-    help="Upload your raw CSV exports.",
+    help="Select one or more raw CSV candidate/lead exports.",
 )
 
 if uploaded_files:
@@ -335,33 +341,33 @@ if uploaded_files:
     if dfs:
         combined_raw = pd.concat(dfs, ignore_index=True)
 
-        with st.spinner("Processing names, validating emails/phones, and extracting LinkedIn profiles..."):
-            dataset_contacts, dataset_linkedin, stats = process_datasets(combined_raw, region=selected_region)
+        with st.spinner("Processing files, normalizing data, and deduplicating..."):
+            dataset_contacts, dataset_linkedin, stats = clean_dataframe(combined_raw, region=selected_region)
 
         col1, col2, col3 = st.columns(3)
         col1.metric("Raw Rows Uploaded", f"{stats['raw_total']:,}")
         col2.metric("Dataset 1 (Email + Phone)", f"{stats['d1_final']:,}")
-        col3.metric("Dataset 2 (LinkedIn Profiles)", f"{stats['d2_final']:,}")
+        col3.metric("Dataset 2 (LinkedIn Leads)", f"{stats['d2_final']:,}")
 
-        # Combined Full Excel Workbook
-        master_excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(master_excel_buffer, engine="openpyxl") as writer:
-            dataset_contacts.to_excel(writer, index=False, sheet_name="Email_Phone_Contacts")
+        # Consolidated Multi-Tab Excel Workbook
+        master_excel = io.BytesIO()
+        with pd.ExcelWriter(master_excel, engine="openpyxl") as writer:
+            dataset_contacts.to_excel(writer, index=False, sheet_name="Direct_Contacts")
             dataset_linkedin.to_excel(writer, index=False, sheet_name="LinkedIn_Profiles")
 
         st.download_button(
-            label="Download Complete Excel Package (Both Datasets in Separate Tabs)",
-            data=master_excel_buffer.getvalue(),
+            label="Download Complete Excel Package (Both Datasets in Separate Sheets)",
+            data=master_excel.getvalue(),
             file_name="cleaned_candidates_complete.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
 
-        tab1, tab2 = st.tabs(["Dataset 1: Phone & Email Contacts", "Dataset 2: LinkedIn Profiles"])
+        tab1, tab2 = st.tabs(["Dataset 1: Phone & Email Contacts", "Dataset 2: LinkedIn Leads"])
 
         with tab1:
             st.subheader("Verified Direct Contacts")
-            st.caption("Only rows with both a valid Phone Number and Email address. Single contact point kept per person.")
+            st.caption("Rows containing both a valid Phone Number and an Email address. Kept unique per person.")
             st.dataframe(dataset_contacts.head(50), use_container_width=True)
 
             c1, c2 = st.columns(2)
@@ -384,8 +390,8 @@ if uploaded_files:
             )
 
         with tab2:
-            st.subheader("LinkedIn Profiles")
-            st.caption("Only rows with a valid LinkedIn profile URL. Deduplicated by unique profile link.")
+            st.subheader("LinkedIn Leads")
+            st.caption("Rows containing a valid Profile URL or LinkedIn link. Deduplicated by profile link.")
             st.dataframe(dataset_linkedin.head(50), use_container_width=True)
 
             c3, c4 = st.columns(2)
