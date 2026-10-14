@@ -271,11 +271,10 @@ def clean_dataframe(df_raw: pd.DataFrame, region: str) -> tuple[pd.DataFrame, pd
     base_df["phone"] = base_df["phone"].apply(lambda p: format_phone_number(p, default_region=region))
     base_df["linkedin_url"] = base_df["linkedin_url"].apply(clean_linkedin_url)
 
-    # --- DATASET 1: Verified Direct Contacts (Requires Email AND Phone) ---
-    df1 = base_df.dropna(subset=["email", "phone"]).copy()
+    # --- DATASET 1: Email-Qualified Contacts (Requires Email; Phone is optional) ---
+    df1 = base_df.dropna(subset=["email"]).copy()
     initial_d1 = len(df1)
     df1 = df1.drop_duplicates(subset=["email"], keep="first")
-    df1 = df1.drop_duplicates(subset=["phone"], keep="first")
     df1 = df1[["first_name", "last_name", "email", "phone", "location", "current_company"]]
     df1.columns = ["First Name", "Last Name", "Email", "Phone", "Location", "Current Company"]
 
@@ -313,10 +312,11 @@ with st.sidebar:
     )
     st.markdown("---")
     st.markdown("### Output Rules")
-    st.markdown("**Dataset 1 (Direct Outreach):**")
-    st.markdown("- Must contain both a valid Email and Phone")
-    st.markdown("- Filters out throwaway emails, prioritizes trusted providers")
-    st.markdown("- Deduplicated by email and phone")
+    st.markdown("**Dataset 1 (Email Outreach):**")
+    st.markdown("- Must contain a valid Email address")
+    st.markdown("- Formats phone numbers if present (optional)")
+    st.markdown("- Filters throwaway emails and prioritizes trusted domains")
+    st.markdown("- Deduplicated by email")
     st.markdown("**Dataset 2 (LinkedIn Profiles):**")
     st.markdown("- Must contain a valid Profile URL or handle")
     st.markdown("- Standardized to full LinkedIn address")
@@ -346,13 +346,13 @@ if uploaded_files:
 
         col1, col2, col3 = st.columns(3)
         col1.metric("Raw Rows Uploaded", f"{stats['raw_total']:,}")
-        col2.metric("Dataset 1 (Email + Phone)", f"{stats['d1_final']:,}")
+        col2.metric("Dataset 1 (Valid Email)", f"{stats['d1_final']:,}")
         col3.metric("Dataset 2 (LinkedIn Leads)", f"{stats['d2_final']:,}")
 
         # Consolidated Multi-Tab Excel Workbook
         master_excel = io.BytesIO()
         with pd.ExcelWriter(master_excel, engine="openpyxl") as writer:
-            dataset_contacts.to_excel(writer, index=False, sheet_name="Direct_Contacts")
+            dataset_contacts.to_excel(writer, index=False, sheet_name="Email_Contacts")
             dataset_linkedin.to_excel(writer, index=False, sheet_name="LinkedIn_Profiles")
 
         st.download_button(
@@ -363,18 +363,18 @@ if uploaded_files:
             use_container_width=True,
         )
 
-        tab1, tab2 = st.tabs(["Dataset 1: Phone & Email Contacts", "Dataset 2: LinkedIn Leads"])
+        tab1, tab2 = st.tabs(["Dataset 1: Email Contacts", "Dataset 2: LinkedIn Leads"])
 
         with tab1:
-            st.subheader("Verified Direct Contacts")
-            st.caption("Rows containing both a valid Phone Number and an Email address. Kept unique per person.")
+            st.subheader("Email-Qualified Contacts")
+            st.caption("Rows containing a valid Email address. Phone numbers formatted if available; deduplicated by email.")
             st.dataframe(dataset_contacts.head(50), use_container_width=True)
 
             c1, c2 = st.columns(2)
             c1.download_button(
                 label="Download Dataset 1 as CSV",
                 data=dataset_contacts.to_csv(index=False).encode("utf-8"),
-                file_name="dataset_1_direct_contacts.csv",
+                file_name="dataset_1_email_contacts.csv",
                 mime="text/csv",
                 use_container_width=True,
             )
@@ -384,7 +384,7 @@ if uploaded_files:
             c2.download_button(
                 label="Download Dataset 1 as Excel",
                 data=buf1.getvalue(),
-                file_name="dataset_1_direct_contacts.xlsx",
+                file_name="dataset_1_email_contacts.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
